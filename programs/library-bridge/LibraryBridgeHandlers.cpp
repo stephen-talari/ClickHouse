@@ -1,23 +1,53 @@
 #include "LibraryBridgeHandlers.h"
+
+#include "CatBoostLibraryHandlerFactory.h"
 #include "ExternalDictionaryLibraryHandlerFactory.h"
 
 #include <Formats/FormatFactory.h>
-#include <Server/HTTP/WriteBufferFromHTTPServerResponse.h>
-#include <IO/WriteHelpers.h>
+#include <IO/ReadBufferFromString.h>
 #include <IO/ReadHelpers.h>
+#include <IO/WriteHelpers.h>
+#include <Poco/Net/HTMLForm.h>
 #include <Poco/Net/HTTPServerRequest.h>
 #include <Poco/Net/HTTPServerResponse.h>
-#include <Poco/Net/HTMLForm.h>
 #include <Poco/ThreadPool.h>
-#include <Processors/Formats/IOutputFormat.h>
-#include <Processors/Formats/IInputFormat.h>
-#include <QueryPipeline/QueryPipeline.h>
 #include <Processors/Executors/CompletedPipelineExecutor.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
+#include <Processors/Formats/IInputFormat.h>
+#include <Processors/Formats/IOutputFormat.h>
 #include <Processors/Sources/SourceFromSingleChunk.h>
 #include <QueryPipeline/Pipe.h>
+#include <QueryPipeline/QueryPipeline.h>
 #include <Server/HTTP/HTMLForm.h>
-#include <IO/ReadBufferFromString.h>
+#include <Server/HTTP/WriteBufferFromHTTPServerResponse.h>
+
+
+
+
+
+#include <Formats/NativeReader.h>
+#include <Formats/NativeWriter.h>
+
+#include <DataTypes/DataTypesNumber.h>
+/// #include <IO/ReadBufferFromString.h> // temporary
+/// #include <IO/WriteHelpers.h>
+/// #include <Server/HTTP/HTMLForm.h>
+/// #include <Server/HTTP/WriteBufferFromHTTPServerResponse.h>
+
+/// #include <Formats/FormatFactory.h>
+/// #include <IO/ReadHelpers.h>
+/// #include <Poco/Net/HTTPServerRequest.h>
+/// #include <Poco/Net/HTTPServerResponse.h>
+/// #include <Poco/Net/HTMLForm.h>
+/// #include <Poco/ThreadPool.h>
+/// #include <Processors/Formats/IOutputFormat.h>
+/// #include <Processors/Formats/IInputFormat.h>
+/// #include <QueryPipeline/QueryPipeline.h>
+/// #include <Processors/Executors/CompletedPipelineExecutor.h>
+/// #include <Processors/Executors/PullingPipelineExecutor.h>
+/// #include <Processors/Sources/SourceFromSingleChunk.h>
+/// #include <QueryPipeline/Pipe.h>
+/// #include <IO/ReadBufferFromString.h>
 
 
 namespace DB
@@ -30,7 +60,7 @@ namespace ErrorCodes
 
 namespace
 {
-    void processError(HTTPServerResponse & response, const std::string & message)
+    void processError(HTTPServerResponse & response, const String & message)
     {
         response.setStatusAndReason(HTTPResponse::HTTP_INTERNAL_SERVER_ERROR);
 
@@ -40,7 +70,7 @@ namespace
         LOG_WARNING(&Poco::Logger::get("LibraryBridge"), fmt::runtime(message));
     }
 
-    std::shared_ptr<Block> parseColumns(std::string && column_string)
+    std::shared_ptr<Block> parseColumns(String && column_string)
     {
         auto sample_block = std::make_shared<Block>();
         auto names_and_types = NamesAndTypesList::parse(column_string);
@@ -58,10 +88,10 @@ namespace
         return ids;
     }
 
-    std::vector<std::string> parseNamesFromBinary(const std::string & names_string)
+    std::vector<String> parseNamesFromBinary(const String & names_string)
     {
         ReadBufferFromString buf(names_string);
-        std::vector<std::string> names;
+        std::vector<String> names;
         readVectorBinary(names, buf);
         return names;
     }
@@ -80,8 +110,8 @@ static void writeData(Block data, OutputFormatPtr format)
 
 ExternalDictionaryLibraryBridgeRequestHandler::ExternalDictionaryLibraryBridgeRequestHandler(size_t keep_alive_timeout_, ContextPtr context_)
     : WithContext(context_)
-    , log(&Poco::Logger::get("ExternalDictionaryLibraryBridgeRequestHandler"))
     , keep_alive_timeout(keep_alive_timeout_)
+    , log(&Poco::Logger::get("ExternalDictionaryLibraryBridgeRequestHandler"))
 {
 }
 
@@ -102,8 +132,8 @@ void ExternalDictionaryLibraryBridgeRequestHandler::handleRequest(HTTPServerRequ
         return;
     }
 
-    std::string method = params.get("method");
-    std::string dictionary_id = params.get("dictionary_id");
+    String method = params.get("method");
+    String dictionary_id = params.get("dictionary_id");
 
     LOG_TRACE(log, "Library method: '{}', dictionary id: {}", method, dictionary_id);
     WriteBufferFromHTTPServerResponse out(response, request.getMethod() == Poco::Net::HTTPRequest::HTTP_HEAD, keep_alive_timeout);
@@ -119,7 +149,7 @@ void ExternalDictionaryLibraryBridgeRequestHandler::handleRequest(HTTPServerRequ
                 return;
             }
 
-            std::string from_dictionary_id = params.get("from_dictionary_id");
+            String from_dictionary_id = params.get("from_dictionary_id");
             bool cloned = false;
             cloned = ExternalDictionaryLibraryHandlerFactory::instance().clone(from_dictionary_id, dictionary_id);
 
@@ -144,7 +174,7 @@ void ExternalDictionaryLibraryBridgeRequestHandler::handleRequest(HTTPServerRequ
                 return;
             }
 
-            std::string library_path = params.get("library_path");
+            String library_path = params.get("library_path");
 
             if (!params.has("library_settings"))
             {
@@ -155,7 +185,7 @@ void ExternalDictionaryLibraryBridgeRequestHandler::handleRequest(HTTPServerRequ
             const auto & settings_string = params.get("library_settings");
 
             LOG_DEBUG(log, "Parsing library settings from binary string");
-            std::vector<std::string> library_settings = parseNamesFromBinary(settings_string);
+            std::vector<String> library_settings = parseNamesFromBinary(settings_string);
 
             /// Needed for library dictionary
             if (!params.has("attributes_names"))
@@ -167,7 +197,7 @@ void ExternalDictionaryLibraryBridgeRequestHandler::handleRequest(HTTPServerRequ
             const auto & attributes_string = params.get("attributes_names");
 
             LOG_DEBUG(log, "Parsing attributes names from binary string");
-            std::vector<std::string> attributes_names = parseNamesFromBinary(attributes_string);
+            std::vector<String> attributes_names = parseNamesFromBinary(attributes_string);
 
             /// Needed to parse block from binary string format
             if (!params.has("sample_block"))
@@ -175,7 +205,7 @@ void ExternalDictionaryLibraryBridgeRequestHandler::handleRequest(HTTPServerRequ
                 processError(response, "No 'sample_block' in request URL");
                 return;
             }
-            std::string sample_block_string = params.get("sample_block");
+            String sample_block_string = params.get("sample_block");
 
             std::shared_ptr<Block> sample_block;
             try
@@ -275,7 +305,7 @@ void ExternalDictionaryLibraryBridgeRequestHandler::handleRequest(HTTPServerRequ
                 return;
             }
 
-            std::string requested_block_string = params.get("requested_block_sample");
+            String requested_block_string = params.get("requested_block_sample");
 
             std::shared_ptr<Block> requested_sample_block;
             try
@@ -360,7 +390,7 @@ void ExternalDictionaryLibraryBridgeExistsHandler::handleRequest(HTTPServerReque
             return;
         }
 
-        std::string dictionary_id = params.get("dictionary_id");
+        String dictionary_id = params.get("dictionary_id");
         auto library_handler = ExternalDictionaryLibraryHandlerFactory::instance().get(dictionary_id);
 
         String res = library_handler ? "1" : "0";
@@ -375,5 +405,196 @@ void ExternalDictionaryLibraryBridgeExistsHandler::handleRequest(HTTPServerReque
     }
 }
 
+/// namespace
+/// {
+
+/// void processError(HTTPServerResponse & response, const String & message)
+/// {
+///     response.setStatusAndReason(HTTPResponse::HTTP_INTERNAL_SERVER_ERROR);
+///
+///     if (!response.sent())
+///         *response.send() << message << std::endl;
+///
+///     LOG_WARNING(&Poco::Logger::get("CatBoostLibraryBridge"), fmt::runtime(message));
+/// }
+/// }
+
+CatBoostLibraryBridgeRequestHandler::CatBoostLibraryBridgeRequestHandler(
+    size_t keep_alive_timeout_, ContextPtr context_)
+    : WithContext(context_)
+    , keep_alive_timeout(keep_alive_timeout_)
+    , log(&Poco::Logger::get("CatBoostLibraryBridgeRequestHandler"))
+{
+}
+
+void CatBoostLibraryBridgeRequestHandler::handleRequest(HTTPServerRequest & request, HTTPServerResponse & response)
+{
+    LOG_TRACE(log, "Request URI: {}", request.getURI());
+    HTMLForm params(getContext()->getSettingsRef(), request);
+
+    if (!params.has("method"))
+    {
+        processError(response, "No 'method' in request URL");
+        return;
+    }
+
+    String method = params.get("method");
+
+    LOG_TRACE(log, "Library method: '{}'", method);
+    WriteBufferFromHTTPServerResponse out(response, request.getMethod() == Poco::Net::HTTPRequest::HTTP_HEAD, keep_alive_timeout);
+
+    try
+    {
+        if (method == "catboost_libNew")
+        {
+            auto & read_buf = request.getStream();
+            params.read(read_buf);
+
+            if (!params.has("library_path"))
+            {
+                processError(response, "No 'library_path' in request URL");
+                return;
+            }
+
+            String library_path = params.get("library_path");
+
+            if (!params.has("model_path"))
+            {
+                processError(response, "No 'model_path' in request URL");
+                return;
+            }
+
+            String model_path = params.get("model_path");
+
+            CatBoostLibraryHandlerFactory::instance().create(library_path, model_path);
+            writeStringBinary("1", out);
+        }
+///         else if (method == "catboost_libDelete")
+///         {
+///             bool deleted = CatBoostLibraryHandlerFactory::instance().reset();
+///
+///             /// Do not throw, a warning is ok.
+///             if (!deleted)
+///                 LOG_WARNING(log, "Did not delete catboost library because it was not loaded.");
+///
+///             writeStringBinary("1", out);
+///         }
+        else if (method == "catboost_GetTreeCount")
+        {
+            auto catboost_handler = CatBoostLibraryHandlerFactory::instance().get();
+
+            if (!catboost_handler)
+            {
+                processError(response, "CatBoost library is not loaded");
+                return;
+            }
+
+            size_t tree_count = catboost_handler->getTreeCount();
+            writeIntBinary(tree_count, out);
+        }
+        else if (method == "catboost_libEvaluate")
+        {
+            auto & read_buf = request.getStream();
+            params.read(read_buf);
+
+            if (!params.has("data"))
+            {
+                processError(response, "No 'data' in request URL");
+                return;
+            }
+
+            String data = params.get("data");
+
+            ReadBufferFromString string_read_buf(data);
+            NativeReader deserializer(string_read_buf, 0);
+            Block block_read = deserializer.read();
+
+            Columns col_ptrs = block_read.getColumns();
+            ColumnRawPtrs col_raw_ptrs;
+            for (const auto & p : col_ptrs)
+                col_raw_ptrs.push_back(&*p);
+
+            auto catboost_handler = CatBoostLibraryHandlerFactory::instance().get();
+
+            if (!catboost_handler)
+            {
+                processError(response, "CatBoost library is not loaded");
+                return;
+            }
+
+            ColumnPtr res_col = catboost_handler->evaluate(col_raw_ptrs);
+
+            DataTypePtr res_col_type = std::make_shared<DataTypeFloat64>();
+            String res_col_name = "res_col";
+
+            ColumnsWithTypeAndName res_cols_with_type_and_name;
+            res_cols_with_type_and_name.push_back({res_col, res_col_type, res_col_name});
+
+            WriteBufferFromOwnString string_write_buf;
+            Block block_write(res_cols_with_type_and_name);
+            NativeWriter native_writer{string_write_buf, 0, block_write};
+            native_writer.write(block_write);
+
+            writeStringBinary(string_write_buf.str(), out);
+        }
+        else
+        {
+            LOG_WARNING(log, "Unknown library method: '{}'", method);
+        }
+    }
+    catch (...)
+    {
+        auto message = getCurrentExceptionMessage(true);
+        LOG_ERROR(log, "Failed to process request. Error: {}", message);
+
+        response.setStatusAndReason(Poco::Net::HTTPResponse::HTTP_INTERNAL_SERVER_ERROR, message); // can't call process_error, because of too soon response sending
+        try
+        {
+            writeStringBinary(message, out);
+            out.finalize();
+        }
+        catch (...)
+        {
+            tryLogCurrentException(log);
+        }
+    }
+
+    try
+    {
+        out.finalize();
+    }
+    catch (...)
+    {
+        tryLogCurrentException(log);
+    }
+}
+
+CatBoostLibraryBridgeExistsHandler::CatBoostLibraryBridgeExistsHandler(size_t keep_alive_timeout_, ContextPtr context_)
+    : WithContext(context_)
+    , keep_alive_timeout(keep_alive_timeout_)
+    , log(&Poco::Logger::get("CatBoostLibraryBridgeExistsHandler"))
+{
+}
+
+void CatBoostLibraryBridgeExistsHandler::handleRequest(HTTPServerRequest & request, HTTPServerResponse & response)
+{
+    try
+    {
+        LOG_TRACE(log, "Request URI: {}", request.getURI());
+        HTMLForm params(getContext()->getSettingsRef(), request);
+
+        auto catboost_handler = CatBoostLibraryHandlerFactory::instance().get();
+
+        String res = catboost_handler ? "1" : "0";
+
+        setResponseDefaultHeaders(response, keep_alive_timeout);
+        LOG_TRACE(log, "Sending ping response: {}", res);
+        response.sendBuffer(res.data(), res.size());
+    }
+    catch (...)
+    {
+        tryLogCurrentException("PingHandler");
+    }
+}
 
 }

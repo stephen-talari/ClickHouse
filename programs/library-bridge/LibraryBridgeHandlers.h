@@ -1,9 +1,10 @@
 #pragma once
 
+#include "ExternalDictionaryLibraryHandler.h"
+
+#include <Common/logger_useful.h>
 #include <Interpreters/Context.h>
 #include <Server/HTTP/HTTPRequestHandler.h>
-#include <Common/logger_useful.h>
-#include "ExternalDictionaryLibraryHandler.h"
 
 
 namespace DB
@@ -27,8 +28,8 @@ public:
 private:
     static constexpr inline auto FORMAT = "RowBinary";
 
+    const size_t keep_alive_timeout;
     Poco::Logger * log;
-    size_t keep_alive_timeout;
 };
 
 
@@ -36,6 +37,36 @@ class ExternalDictionaryLibraryBridgeExistsHandler : public HTTPRequestHandler, 
 {
 public:
     ExternalDictionaryLibraryBridgeExistsHandler(size_t keep_alive_timeout_, ContextPtr context_);
+
+    void handleRequest(HTTPServerRequest & request, HTTPServerResponse & response) override;
+
+private:
+    const size_t keep_alive_timeout;
+    Poco::Logger * log;
+};
+
+
+/// Handler for interaction with catboost library. The protocol is expected as follows: (1) Send "catboost_libNew" request to load
+/// libcatboost.so into the bridge, (2) send "catboost_evaluate" to do the model evaluation (3), send "catboost_libRemove" to unload
+/// libcatboost.so.
+class CatBoostLibraryBridgeRequestHandler : public HTTPRequestHandler, WithContext
+{
+public:
+    CatBoostLibraryBridgeRequestHandler(size_t keep_alive_timeout_, ContextPtr context_);
+
+    void handleRequest(HTTPServerRequest & request, HTTPServerResponse & response) override;
+
+private:
+    const size_t keep_alive_timeout;
+    Poco::Logger * log;
+};
+
+
+// Handler for checking if the CatBoost library is loaded (used for handshake)
+class CatBoostLibraryBridgeExistsHandler : public HTTPRequestHandler, WithContext
+{
+public:
+    CatBoostLibraryBridgeExistsHandler(size_t keep_alive_timeout_, ContextPtr context_);
 
     void handleRequest(HTTPServerRequest & request, HTTPServerResponse & response) override;
 
