@@ -126,7 +126,8 @@ ClusterDiscovery::ClusterDiscovery(
                 /* zk_root_= */ config.getString(prefix + ".path"),
                 /* port= */ context->getTCPPort(),
                 /* secure= */ config.getBool(prefix + ".secure", false),
-                /* shard_id= */ config.getUInt(prefix + ".shard", 0)
+                /* shard_id= */ config.getUInt(prefix + ".shard", 0),
+                /* observer_mode= */ config.getUInt(prefix + ".observer", false)
             )
         );
     }
@@ -240,6 +241,11 @@ ClusterPtr ClusterDiscovery::makeCluster(const ClusterInfo & cluster_info)
     return cluster;
 }
 
+static bool contains(const Strings & list, const String & value)
+{
+    return std::find(list.begin(), list.end(), value) != list.end();
+}
+
 /// Reads data from zookeeper and tries to update cluster.
 /// Returns true on success (or no update required).
 bool ClusterDiscovery::updateCluster(ClusterInfo & cluster_info)
@@ -252,7 +258,7 @@ bool ClusterDiscovery::updateCluster(ClusterInfo & cluster_info)
     Strings node_uuids = getNodeNames(zk, cluster_info.zk_root, cluster_info.name, &start_version, false);
     auto & nodes_info = cluster_info.nodes_info;
 
-    if (std::find(node_uuids.begin(), node_uuids.end(), current_node_name) == node_uuids.end())
+    if (!cluster_info.current_node_is_observer && !contains(node_uuids, current_node_name))
     {
         LOG_ERROR(log, "Can't find current node in cluster '{}', will register again", cluster_info.name);
         registerInZk(zk, cluster_info);
@@ -292,6 +298,12 @@ bool ClusterDiscovery::updateCluster(ClusterInfo & cluster_info)
 
 void ClusterDiscovery::registerInZk(zkutil::ZooKeeperPtr & zk, ClusterInfo & info)
 {
+    if (info.current_node_is_observer)
+    {
+        LOG_DEBUG(log, "Current node {} is observer of cluster {}", current_node_name, info.name);
+        return;
+    }
+
     LOG_DEBUG(log, "Registering current node {} in cluster {}", current_node_name, info.name);
 
     String node_path = getShardsListPath(info.zk_root) / current_node_name;
